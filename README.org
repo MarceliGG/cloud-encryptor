@@ -1,1 +1,27 @@
-* cloud-encryptor
+#+TITLE: cloud-encryptor
+
+* Table of Contents :toc:
+- [[#instalation][Instalation]]
+  - [[#from-source][From Source]]
+
+* Instalation
+** From Source
+*** Dependencies for Compilation
+- [[https://www.rust-lang.org/][rust-lang]]
+
+*** Clone Repo
+#+begin_src sh
+git clone https://github.com/MarceliGG/cloud-encryptor
+cd cloud-encryptor
+#+end_src
+
+*** Compile and Run
+#+begin_src sh
+cargo run
+#+end_src
+
+*** Compile
+#+begin_src sh
+cargo build
+#+end_src
+
