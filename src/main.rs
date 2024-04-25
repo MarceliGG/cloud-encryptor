@@ -1,12 +1,13 @@
 use onedrive_api::{
-    Auth, ClientCredential, DriveLocation, FileName, ItemLocation, OneDrive, Permission, Tenant,
+    Auth, ClientCredential, DriveLocation, FileName, ItemLocation, OneDrive, Permission, Result,
+    Tenant,
 };
 use rouille::{router, Response, Server};
 use std::fs;
 use std::io::{self, Write};
 
 static mut SERVER_STOP: bool = false;
-static mut CODE_G: String = String::new();
+static mut CODE: String = String::new();
 
 #[tokio::main]
 async fn main() {
@@ -15,24 +16,73 @@ async fn main() {
         std::env::var("HOME").unwrap()
     );
 
-    let token: String;
-    print!("Do you want to log in with new account? [y/N]");
-    let mut input: String = String::new();
-    let _ = io::stdout().flush();
-    io::stdin()
-        .read_line(&mut input)
-        .expect("Error reading from STDIN");
+    let mut token: String;
+    let mut drive;
 
-    match input.as_str().trim() {
-        "y" => token = login(cache_file_path).await,
-        _ => token = fs::read_to_string(cache_file_path).unwrap(),
+    match fs::read_to_string(cache_file_path.clone()) {
+        Ok(t) => {
+            token = t;
+        }
+        Err(_) => token = login(cache_file_path.clone()).await,
     }
 
-    let drive = OneDrive::new(token, DriveLocation::me());
+    drive = OneDrive::new(token, DriveLocation::me());
 
-    let folder_item = drive
-        .create_folder(ItemLocation::root(), FileName::new("test_folder").unwrap())
-        .await;
+    loop {
+        print!(">>");
+        let mut input: String = String::new();
+        let _ = io::stdout().flush();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Error reading from STDIN");
+
+        match input.as_str().trim() {
+            "u" => {
+                print!("File path: ");
+                let mut input: String = String::new();
+                let _ = io::stdout().flush();
+                io::stdin()
+                    .read_line(&mut input)
+                    .expect("Error reading from STDIN");
+                upload(input.trim().to_string(), &drive).await;
+            }
+            "q" => break,
+            "l" => {
+                token = login(cache_file_path.clone()).await;
+                drive = OneDrive::new(token, DriveLocation::me())
+            }
+            "help" | "h" => {
+                println!("h - help menu");
+                println!("l - log in");
+                println!("u - upload file");
+            }
+            _ => println!("err"),
+        }
+    }
+}
+
+async fn upload(file: String, drive: &OneDrive) {
+    let path = std::path::Path::new(&file);
+    let name = path.file_name().unwrap().to_str().unwrap();
+    // println!("{}", file);
+    let fc = fs::read_to_string(&file);
+    match fc {
+        Ok(c) => {
+            let r = drive
+                .upload_small(
+                    ItemLocation::from_path(&format!("/encrypted/{}", name)).unwrap(),
+                    c,
+                )
+                .await;
+            match r {
+                Ok(_) => println!("uploaded"),
+                Err(e) => println!("err: {}", e),
+            }
+        }
+        Err(_) => {
+            println!("could not read file")
+        }
+    }
 }
 
 async fn login(cache_file: String) -> String {
@@ -48,7 +98,7 @@ async fn login(cache_file: String) -> String {
         let result = router!(request,
             (GET) (/auth) => {
                 unsafe {
-                    CODE_G = request.get_param("code").unwrap();
+                    CODE = request.get_param("code").unwrap();
                     SERVER_STOP = true;
                 }
                 "you can close this tab"
@@ -67,14 +117,13 @@ async fn login(cache_file: String) -> String {
             }
         }
     }
-    let code;
+    let token_response;
     unsafe {
-        code = CODE_G.clone();
+        token_response = auth
+            .login_with_code(&CODE.clone(), &ClientCredential::None)
+            .await
+            .unwrap();
     }
-    let token_response = auth
-        .login_with_code(&code, &ClientCredential::None)
-        .await
-        .unwrap();
     let token = token_response.access_token;
     let path = std::path::Path::new(&cache_file);
     let prefix = path.parent().unwrap();
