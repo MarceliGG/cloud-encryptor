@@ -55,6 +55,20 @@ async fn main() {
                 println!("h - help menu");
                 println!("l - log in");
                 println!("u - upload file");
+                println!("f - list files");
+            }
+            "f" => {
+                let list = drive
+                    .list_children(ItemLocation::from_path("/encrypted").unwrap())
+                    .await;
+                match list {
+                    Ok(l) => {
+                        for i in l.iter() {
+                            println!("{}", i.name.clone().unwrap());
+                        }
+                    }
+                    Err(e) => println!("{}", e),
+                }
             }
             _ => println!("err"),
         }
