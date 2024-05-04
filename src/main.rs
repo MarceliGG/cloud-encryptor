@@ -1,3 +1,5 @@
+use aes_gcm::aead::generic_array::GenericArray;
+use aes_gcm::aes::Aes256;
 use onedrive_api::{
     Auth, ClientCredential, DriveLocation, ItemLocation, OneDrive, Permission, Tenant,
 };
@@ -8,32 +10,43 @@ use std::io::{self, Write};
 static mut SERVER_STOP: bool = false;
 static mut CODE: String = String::new();
 
+use aes_gcm::{
+    aead::{AeadCore, AeadInPlace, KeyInit, OsRng},
+    Aes256Gcm, Key, Nonce,
+};
+
 #[tokio::main]
 async fn main() {
-    println!(
-        "{}",
-        xdg_user::UserDirs::new()
-            .unwrap()
-            .downloads()
-            .unwrap()
-            .display()
-    );
-    let cache_file_path = format!(
-        "{}/.cache/cloudencryptor/token",
-        std::env::var("HOME").unwrap()
-    );
+    let cache_dir = format!("{}/.cache/cloudencryptor/", std::env::var("HOME").unwrap());
 
     let mut token: String;
     let mut drive;
 
-    match fs::read_to_string(cache_file_path.clone()) {
+    match fs::read_to_string(format!("{}/token", cache_dir)) {
         Ok(t) => {
             token = t;
+            println!("Using exsiting token.")
         }
-        Err(_) => token = login(cache_file_path.clone()).await,
+        Err(_) => {
+            token = login().await;
+            cache_token(cache_dir.clone(), &token);
+        }
     }
 
     drive = OneDrive::new(token, DriveLocation::me());
+
+    let mut key;
+    match fs::read(format!("{}/key", cache_dir)) {
+        Ok(k) => {
+            key = k;
+            println!("Using exsiting encryption key.")
+        }
+        Err(_) => {
+            key = Aes256Gcm::generate_key(OsRng).to_vec();
+            cache_key(cache_dir.clone(), &key);
+            println!("Generated key: {:?}", key)
+        }
+    }
 
     loop {
         print!(">>");
@@ -51,7 +64,7 @@ async fn main() {
                 io::stdin()
                     .read_line(&mut input)
                     .expect("Error reading from STDIN");
-                upload(input.trim().to_string(), &drive).await;
+                upload(input.trim().to_string(), &drive, &key).await;
             }
             "d" => {
                 print!("File name: ");
@@ -60,12 +73,24 @@ async fn main() {
                 io::stdin()
                     .read_line(&mut input)
                     .expect("Error reading from STDIN");
-                download(input.trim().to_string(), &drive).await;
+                download(input.trim().to_string(), &drive, &key).await;
             }
             "q" => break,
             "l" => {
-                token = login(cache_file_path.clone()).await;
-                drive = OneDrive::new(token, DriveLocation::me())
+                token = login().await;
+                drive = OneDrive::new(&token, DriveLocation::me());
+                cache_token(cache_dir.clone(), &token);
+                match fs::read(format!("{}/key", cache_dir)) {
+                    Ok(k) => {
+                        key = k;
+                        println!("Using exsiting encryption key.")
+                    }
+                    Err(_) => {
+                        key = Aes256Gcm::generate_key(OsRng).to_vec();
+                        cache_key(cache_dir.clone(), &key);
+                        println!("Generated key: {:?}", key)
+                    }
+                }
             }
             "help" | "h" => {
                 println!("h - help menu");
@@ -80,8 +105,79 @@ async fn main() {
     }
 }
 
-async fn download_from_url(url: String, file_name: String) {
+fn cache_token(cache_dir: String, token: &String) {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&format!("{}/token", cache_dir));
+
+    match file {
+        Ok(mut f) => {
+            f.write_all(&token.as_bytes());
+        }
+        Err(e) => {
+            println!("Could not write file: {}", e);
+        }
+    }
+}
+
+fn cache_key(cache_dir: String, key: &Vec<u8>) {
+    let mut file_key = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&format!("{}/key", cache_dir));
+
+    match file_key {
+        Ok(mut f) => {
+            f.write_all(&key);
+        }
+        Err(e) => {
+            println!("Could not write file: {}", e);
+        }
+    }
+}
+
+fn decrypt(data: Vec<u8>, key: &Vec<u8>) -> Vec<u8> {
+    let mut out = data;
+    let nonce = GenericArray::from([
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+        out.remove(0),
+    ]);
+    Aes256Gcm::new_from_slice(key)
+        .unwrap()
+        .decrypt_in_place(&nonce, b"", &mut out);
+    out
+}
+
+fn encrypt(data: Vec<u8>, key: &Vec<u8>) -> Vec<u8> {
+    let mut d = data;
+    let n = &Aes256Gcm::generate_nonce(&mut OsRng);
+    Aes256Gcm::new_from_slice(key)
+        .unwrap()
+        .encrypt_in_place(n, b"", &mut d);
+    let mut out = n.to_vec();
+    out.append(&mut d);
+    out
+}
+
+async fn download_from_url(url: String) -> Vec<u8> {
     let mut resp = reqwest::get(url).await.expect("request failed");
+    resp.bytes().await.unwrap().to_vec()
+}
+
+fn decrypt_and_save(data: Vec<u8>, file_name: String, key: &Vec<u8>) {
+    let data_decrypted = decrypt(data, key);
+
     let mut path = format!(
         "{}/{}",
         xdg_user::UserDirs::new()
@@ -108,21 +204,28 @@ async fn download_from_url(url: String, file_name: String) {
         );
         i += 1;
     }
-    let mut out = fs::File::create(&path_f).unwrap();
-    io::copy(
-        &mut resp.text().await.expect("body invalid").as_bytes(),
-        &mut out,
-    )
-    .expect("failed to copy content");
-    println!("Downloaded to {}", &path_f);
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path_f);
+
+    match file {
+        Ok(mut f) => {
+            f.write_all(&data_decrypted);
+            println!("Downloaded to: {}", path_f);
+        }
+        Err(e) => {
+            println!("Could not write file: {}", e);
+        }
+    }
 }
 
-async fn download(file: String, drive: &OneDrive) {
+async fn download(file: String, drive: &OneDrive, key: &Vec<u8>) {
     match drive
         .get_item_download_url(ItemLocation::from_path(&format!("/encrypted/{}", file)).unwrap())
         .await
     {
-        Ok(l) => download_from_url(l, file).await,
+        Ok(l) => decrypt_and_save(download_from_url(l).await, file, key),
         Err(e) => println!("{}", e),
     }
 }
@@ -141,17 +244,16 @@ async fn list_files(drive: &OneDrive) {
     }
 }
 
-async fn upload(file: String, drive: &OneDrive) {
+async fn upload(file: String, drive: &OneDrive, key: &Vec<u8>) {
     let path = std::path::Path::new(&file);
     let name = path.file_name().unwrap().to_str().unwrap();
-    // println!("{}", file);
-    let fc = fs::read_to_string(&file);
-    match fc {
-        Ok(c) => {
+    let file = fs::read(&file);
+    match file {
+        Ok(content) => {
             let r = drive
                 .upload_small(
                     ItemLocation::from_path(&format!("/encrypted/{}", name)).unwrap(),
-                    c,
+                    encrypt(content, key),
                 )
                 .await;
             match r {
@@ -165,7 +267,7 @@ async fn upload(file: String, drive: &OneDrive) {
     };
 }
 
-async fn login(cache_file: String) -> String {
+async fn login() -> String {
     let auth = Auth::new(
         "48100e01-0c50-4c12-8887-d3fa69416e02",
         Permission::new_read().write(true),
@@ -204,11 +306,5 @@ async fn login(cache_file: String) -> String {
             .await
             .unwrap();
     }
-    let token = token_response.access_token;
-    let path = std::path::Path::new(&cache_file);
-    let prefix = path.parent().unwrap();
-    fs::create_dir_all(prefix).unwrap();
-    let mut file = fs::File::create(cache_file).unwrap();
-    file.write_all(token.as_bytes());
-    token
+    token_response.access_token
 }
