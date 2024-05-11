@@ -1,41 +1,16 @@
-use aes_gcm::{
-    aead::{KeyInit, OsRng},
-    Aes256Gcm,
-};
 use std::io::{self, Write};
 mod credentials;
 mod drive;
+mod encryption;
+use drive::Drive;
 
 #[tokio::main]
 async fn main() {
     let credential_manager = credentials::CredentialManager {
         directory: format!("{}/.cache/cloudencryptor/", std::env::var("HOME").unwrap()),
     };
-    let token: String;
-    match credential_manager.get_token() {
-        Ok(t) => {
-            token = t;
-            println!("Using exsiting token.");
-        }
-        Err(_) => {
-            token = drive::Drive::login().await;
-            credential_manager.save_token(token.clone());
-        }
-    }
+    let mut dr = Drive::login(&credential_manager).await;
 
-    let key;
-    match credential_manager.get_passwd() {
-        Ok(k) => {
-            key = k;
-            println!("Using exsiting encryption key.")
-        }
-        Err(_) => {
-            key = Aes256Gcm::generate_key(OsRng).to_vec();
-            credential_manager.save_passwd(key.clone());
-            println!("Generated key: {:?}", key)
-        }
-    }
-    let mut dr = drive::Drive::new(token, key);
 
     loop {
         print!(">>");
@@ -65,23 +40,7 @@ async fn main() {
                 dr.download(input.trim().to_string()).await;
             }
             "q" => break,
-            "l" => {
-                let token = drive::Drive::login().await;
-                credential_manager.save_token(token.clone());
-                let key;
-                match credential_manager.get_passwd() {
-                    Ok(k) => {
-                        key = k;
-                        println!("Using exsiting encryption key.")
-                    }
-                    Err(_) => {
-                        key = Aes256Gcm::generate_key(OsRng).to_vec();
-                        credential_manager.save_passwd(key.clone());
-                        println!("Generated key: {:?}", key)
-                    }
-                }
-                let mut dr = drive::Drive::new(token, key);
-            }
+            "l" => dr = Drive::new_login(&credential_manager).await,
             "help" | "h" => {
                 println!("h - help menu");
                 println!("l - log in");

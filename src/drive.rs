@@ -1,20 +1,34 @@
 static mut SERVER_STOP: bool = false;
 static mut CODE: String = String::new();
-use std::io::Write;
-
-use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::Result;
-use aes_gcm::aes::Aes256;
 use aes_gcm::{
-    aead::{AeadCore, AeadInPlace, KeyInit, OsRng},
+    aead::{KeyInit, OsRng},
     Aes256Gcm,
 };
+use std::io::Write;
+
+use crate::credentials::{self, CredentialManager};
+use crate::encryption;
 use onedrive_api::{
     Auth, ClientCredential, DriveLocation, ItemLocation, OneDrive, Permission, Tenant,
+    TokenResponse,
 };
 use rouille::{router, Response, Server};
 use std::fs;
-mod encryption;
+
+fn get_key(credential_manager: &CredentialManager) -> Vec<u8> {
+    let mut key;
+    match credential_manager.get_passwd() {
+        Ok(k) => {
+            key = k;
+            println!("Using exsiting encryption key.")
+        }
+        Err(_) => {
+            key = Aes256Gcm::generate_key(OsRng).to_vec();
+            credential_manager.save_passwd(key.clone());
+        }
+    }
+    key
+}
 
 pub struct Drive {
     drive: OneDrive,
@@ -22,22 +36,50 @@ pub struct Drive {
 }
 
 impl Drive {
-    pub fn new(token: String, key: Vec<u8>) -> Self {
-        Drive {
-            drive: OneDrive::new(token, DriveLocation::me()),
-            key: key,
+    pub async fn login(credential_manager: &CredentialManager) -> Self {
+        let mut dr;
+        match credential_manager.get_token() {
+            Ok(refresh_token) => {
+                match Auth::new(
+                    "48100e01-0c50-4c12-8887-d3fa69416e02",
+                    Permission::new_read().write(true).offline_access(true),
+                    "http://127.0.0.1:3000/auth",
+                    Tenant::Common,
+                )
+                .login_with_refresh_token(&refresh_token, &ClientCredential::None)
+                .await
+                {
+                    Ok(token_response) => {
+                        println!("Using exsiting refresh token.");
+                        credential_manager.save_token(token_response.refresh_token.unwrap());
+                        dr = Drive {
+                            drive: OneDrive::new(token_response.access_token, DriveLocation::me()),
+                            key: get_key(credential_manager),
+                        }
+                    }
+                    Err(e) => {
+                        println!("auth err {}", e);
+                        dr = Drive::new_login(credential_manager).await;
+                    }
+                }
+            }
+            Err(_) => {
+                println!("No refresh token. Please Log in...");
+                dr = Drive::new_login(credential_manager).await
+            }
         }
+        dr
     }
 
     async fn download_from_url(url: String) -> Vec<u8> {
-        let mut resp = reqwest::get(url).await.expect("request failed");
+        let resp = reqwest::get(url).await.expect("request failed");
         resp.bytes().await.unwrap().to_vec()
     }
 
-    fn decrypt_and_save(data: Vec<u8>, file_name: String, key: &Vec<u8>) {
-        let data_decrypted = encryption::decrypt(data, key);
+    fn decrypt_and_save(data: Vec<u8>, file_name: String, key: Vec<u8>) {
+        let data_decrypted = encryption::decrypt(data, &key);
 
-        let mut path = format!(
+        let path = format!(
             "{}/{}",
             xdg_user::UserDirs::new()
                 .unwrap()
@@ -51,7 +93,7 @@ impl Drive {
         while std::path::Path::new(&path_f).exists() {
             let p = std::path::Path::new(&path);
             path_f = format!(
-                "{}/{}{}.{}",
+                "{}/{}_{}.{}",
                 xdg_user::UserDirs::new()
                     .unwrap()
                     .downloads()
@@ -63,7 +105,7 @@ impl Drive {
             );
             i += 1;
         }
-        let mut file = fs::OpenOptions::new()
+        let file = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&path_f);
@@ -82,12 +124,16 @@ impl Drive {
     pub async fn download(&self, file: String) {
         match self
             .drive
+            .clone()
             .get_item_download_url(
                 ItemLocation::from_path(&format!("/encrypted/{}", file)).unwrap(),
             )
             .await
         {
-            Ok(l) => Drive::decrypt_and_save(Drive::download_from_url(l).await, file, &self.key),
+            Ok(l) => {
+                Drive::decrypt_and_save(Drive::download_from_url(l).await, file, self.key.clone())
+            }
+
             Err(e) => println!("{}", e),
         }
     }
@@ -95,6 +141,7 @@ impl Drive {
     pub async fn list_files(&self) {
         let list = self
             .drive
+            .clone()
             .list_children(ItemLocation::from_path("/encrypted").unwrap())
             .await;
         match list {
@@ -115,9 +162,10 @@ impl Drive {
             Ok(content) => {
                 let r = self
                     .drive
+                    .clone()
                     .upload_small(
                         ItemLocation::from_path(&format!("/encrypted/{}", name)).unwrap(),
-                        encryption::encrypt(content, &self.key),
+                        encryption::encrypt(content, &self.key.clone()),
                     )
                     .await;
                 match r {
@@ -131,13 +179,14 @@ impl Drive {
         };
     }
 
-    pub async fn login() -> String {
+    pub async fn new_login(credential_manager: &CredentialManager) -> Self {
         let auth = Auth::new(
             "48100e01-0c50-4c12-8887-d3fa69416e02",
-            Permission::new_read().write(true),
+            Permission::new_read().write(true).offline_access(true),
             "http://127.0.0.1:3000/auth",
             Tenant::Common,
         );
+
         println!("{}", auth.code_auth_url());
 
         let server = Server::new("127.0.0.1:3000", move |request| {
@@ -163,21 +212,17 @@ impl Drive {
                 }
             }
         }
-        let token_response;
+        let mut token_response;
         unsafe {
-            match auth
+            token_response = auth
                 .login_with_code(&CODE.clone(), &ClientCredential::None)
                 .await
-            {
-                Ok(a) => {
-                    token_response = a.access_token
-                }
-                Err(e) => {
-                    println!("{}", e);
-                    token_response = String::from("a");
-                }
-            }
+                .unwrap();
         }
-        token_response
+        credential_manager.save_token(token_response.refresh_token.clone().unwrap());
+        Drive {
+            drive: OneDrive::new(token_response.access_token, DriveLocation::me()),
+            key: get_key(credential_manager),
+        }
     }
 }
