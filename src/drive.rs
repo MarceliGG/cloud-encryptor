@@ -45,7 +45,7 @@ fn get_key(credential_manager: &CredentialManager, new: bool) -> Vec<u8> {
             }
         }
         Err(_) => {
-            print!(">>");
+            print!("Enter password for encryption: ");
             let mut input: String = String::new();
             let _ = io::stdout().flush();
             io::stdin()
