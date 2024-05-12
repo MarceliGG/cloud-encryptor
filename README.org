@@ -3,6 +3,7 @@
 * Table of Contents :toc:
 - [[#instalation][Instalation]]
   - [[#from-source][From Source]]
+- [[#usage][Usage]]
 
 * Instalation
 ** From Source
@@ -15,13 +16,34 @@ git clone https://github.com/MarceliGG/cloud-encryptor
 cd cloud-encryptor
 #+end_src
 
-*** Compile and Run
-#+begin_src sh
-cargo run
-#+end_src
-
 *** Compile
+After compilation executable should be in {repo_root}/target/release/cloud_encryptor
 #+begin_src sh
-cargo build
+cargo build --release
 #+end_src
 
+* Usage
+Run the executable in terminal.
+
+After running for the first time it should ask you to log in to onedrive. Copy the link to your browser and log in.
+After you log in it will ask you for password used for encryption.
+
+If you are logged you should see a prompt that looks somethig like this:
+#+begin_src 
+>>
+#+end_src
+
+If you type "h" it will display a list of avilible commands.
+#+begin_src 
+f - list files
+u - upload file
+d - download file
+q - quit
+l - log in
+#+end_src
+
+Files will be stored in /encrypted on your onedrive.
+
+When uploading file it will ask you for the path to the file.
+
+To download a flie you just need to enter file name. Files will be saved in your downloads folder.
