@@ -1,7 +1,4 @@
 use std::fs;
-use std::io::Write;
-
-use aes_gcm::aes::cipher::typenum::marker_traits;
 
 pub struct CredentialReadError;
 
@@ -25,6 +22,7 @@ impl CredentialManager {
     }
 
     pub fn save_token(&self, token: String) {
+	fs::DirBuilder::new().recursive(true).create(&self.directory);
         match fs::write(format!("{}/token", &self.directory), token) {
             Err(e) => println!("Could not write file: {}", e),
             Ok(_) => println!("Saved refresh new token."),
@@ -32,7 +30,8 @@ impl CredentialManager {
     }
 
     pub fn save_passwd(&self, passwd: &str) {
-        match fs::write(format!("{}/token", &self.directory), passwd) {
+	fs::DirBuilder::new().recursive(true).create(&self.directory);
+        match fs::write(format!("{}/key", &self.directory), passwd) {
             Err(e) => println!("Could not write file: {}", e),
             Ok(_) => println!("Saved password."),
         }

@@ -1,23 +1,18 @@
 static mut SERVER_STOP: bool = false;
 static mut CODE: String = String::new();
-use aes_gcm::{
-    aead::{KeyInit, OsRng},
-    Aes256Gcm,
-};
 use md5;
 use std::io::{self, Write};
 
-use crate::credentials::{self, CredentialManager};
+use crate::credentials::CredentialManager;
 use crate::encryption;
 use onedrive_api::{
     Auth, ClientCredential, DriveLocation, ItemLocation, OneDrive, Permission, Tenant,
-    TokenResponse,
 };
 use rouille::{router, Response, Server};
 use std::fs;
 
 fn get_key(credential_manager: &CredentialManager, new: bool) -> Vec<u8> {
-    let mut pass;
+    let pass;
     match credential_manager.get_passwd() {
         Ok(k) => {
             if new {
@@ -72,7 +67,7 @@ pub struct Drive {
 
 impl Drive {
     pub async fn login(credential_manager: &CredentialManager) -> Self {
-        let mut dr;
+        let dr;
         match credential_manager.get_token() {
             Ok(refresh_token) => {
                 match Auth::new(
@@ -146,10 +141,10 @@ impl Drive {
             .open(&path_f);
 
         match file {
-            Ok(mut f) => {
-                f.write_all(&data_decrypted);
-                println!("Downloaded to: {}", path_f);
-            }
+            Ok(mut f) => match f.write_all(&data_decrypted) {
+                Ok(_) => println!("Downloaded to: {}", path_f),
+                Err(e) => println!("Failed to write file: {}", e),
+            },
             Err(e) => {
                 println!("Could not write file: {}", e);
             }
@@ -247,7 +242,7 @@ impl Drive {
                 }
             }
         }
-        let mut token_response;
+        let token_response;
         unsafe {
             token_response = auth
                 .login_with_code(&CODE.clone(), &ClientCredential::None)
