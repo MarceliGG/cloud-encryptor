@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 aes-gcm = "0.10.3"
+md5 = "0.7.0"
 onedrive-api = "0.10.0"
 reqwest = "0.12.4"
 rouille = "3.6.2"

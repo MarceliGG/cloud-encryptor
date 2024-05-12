@@ -41,15 +41,14 @@ async fn main() {
             }
             "q" => break,
             "l" => dr = Drive::new_login(&credential_manager).await,
-            "help" | "h" => {
-                println!("h - help menu");
-                println!("l - log in");
-                println!("u - upload file");
-                println!("f - list files");
-                println!("d - download file");
-            }
             "f" => dr.list_files().await,
-            _ => println!("err"),
+            _ => {
+                println!("f - list files");
+                println!("u - upload file");
+                println!("d - download file");
+                println!("l - quit");
+                println!("l - log in");
+            }
         }
     }
 }

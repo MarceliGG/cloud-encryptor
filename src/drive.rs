@@ -4,7 +4,8 @@ use aes_gcm::{
     aead::{KeyInit, OsRng},
     Aes256Gcm,
 };
-use std::io::Write;
+use md5;
+use std::io::{self, Write};
 
 use crate::credentials::{self, CredentialManager};
 use crate::encryption;
@@ -15,19 +16,53 @@ use onedrive_api::{
 use rouille::{router, Response, Server};
 use std::fs;
 
-fn get_key(credential_manager: &CredentialManager) -> Vec<u8> {
-    let mut key;
+fn get_key(credential_manager: &CredentialManager, new: bool) -> Vec<u8> {
+    let mut pass;
     match credential_manager.get_passwd() {
         Ok(k) => {
-            key = k;
-            println!("Using exsiting encryption key.")
+            if new {
+                print!("Do you want to use saved password? [y/N]: ");
+                let mut input: String = String::new();
+                let _ = io::stdout().flush();
+                io::stdin()
+                    .read_line(&mut input)
+                    .expect("Error reading from STDIN");
+                match input.to_string().trim() {
+                    "y" | "Y" => {
+                        pass = k;
+                        println!("Using exsiting encryption password.")
+                    }
+                    _ => {
+                        print!("Enter password for encryption: ");
+                        let mut input: String = String::new();
+                        let _ = io::stdout().flush();
+                        io::stdin()
+                            .read_line(&mut input)
+                            .expect("Error reading from STDIN");
+
+                        pass = input;
+                        credential_manager.save_passwd(&pass.clone());
+                    }
+                }
+            } else {
+                pass = k;
+                println!("Using exsiting encryption password.")
+            }
         }
         Err(_) => {
-            key = Aes256Gcm::generate_key(OsRng).to_vec();
-            credential_manager.save_passwd(key.clone());
+            print!(">>");
+            let mut input: String = String::new();
+            let _ = io::stdout().flush();
+            io::stdin()
+                .read_line(&mut input)
+                .expect("Error reading from STDIN");
+
+            pass = input;
+            credential_manager.save_passwd(&pass.clone());
         }
     }
-    key
+
+    format!("{:?}", md5::compute(pass)).as_bytes().to_vec()
 }
 
 pub struct Drive {
@@ -54,7 +89,7 @@ impl Drive {
                         credential_manager.save_token(token_response.refresh_token.unwrap());
                         dr = Drive {
                             drive: OneDrive::new(token_response.access_token, DriveLocation::me()),
-                            key: get_key(credential_manager),
+                            key: get_key(credential_manager, false),
                         }
                     }
                     Err(e) => {
@@ -222,7 +257,7 @@ impl Drive {
         credential_manager.save_token(token_response.refresh_token.clone().unwrap());
         Drive {
             drive: OneDrive::new(token_response.access_token, DriveLocation::me()),
-            key: get_key(credential_manager),
+            key: get_key(credential_manager, true),
         }
     }
 }
