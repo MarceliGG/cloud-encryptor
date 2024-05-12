@@ -236,6 +236,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud_encryptor"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "md5",
+ "onedrive-api",
+ "reqwest",
+ "rouille",
+ "tokio",
+ "xdg-user",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -306,19 +319,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
-]
-
-[[package]]
-name = "drive_encryptor"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "md5",
- "onedrive-api",
- "reqwest",
- "rouille",
- "tokio",
- "xdg-user",
 ]
 
 [[package]]
